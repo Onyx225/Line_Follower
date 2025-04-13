@@ -11,17 +11,24 @@ int D2_M2 = 9;
 float KP = 0.4;
 float KD = 0.00001;   // pid ok : 0.4/0.00001/0.000007
 float KI = 0.000005;  //0.0000007
-int I;
+long int I;
 float Pvalue;
 float Ivalue;
 float Dvalue;
 
-int StateId = 1;
+enum Stare {
+  Urmareste_Linie = 1,      //ma asigur ca prima valoare este 1 
+  INTERSECTIE,
+  Scara_Stg,
+  Scara_Drp,
+  Perete
+};
+Stare StateId = Urmareste_Linie;
+
 unsigned long timp_intersectie = 0;
 
 #define TRESHOLD 0
-#define BOOST 2
-#define IR 2
+#define BOOST 2       // Chesti de viitor
 
 QTRSensors qtr;
 
@@ -51,13 +58,10 @@ void setup() {
   Serial.begin(9600);
 }
 
-float PIDval() {
+float PIDval(int position, int target_position) {       //calculam pid
   static uint16_t lastError = 0;
 
-  uint16_t sensors[6];
-  int16_t position = qtr.readLineBlack(sensorValues);
-
-  int16_t error = position - 2500;
+  int16_t error = position - target_position;
   I += error;
 
   Pvalue = KP * error;
@@ -70,70 +74,61 @@ float PIDval() {
 }
 void loop() {
 
-  PIDval();
+  uint16_t sensors[6];
+  int16_t position = qtr.readLineBlack(sensorValues);      
+  float pidValue = PIDval(position, 2500);          //aflu pid-ul si imi calculez vitezele
+  int m1Speed = basePWM - pidValue;        
+  int m2Speed = basePWM + pidValue;
 
   switch (StateId) {
 
-    case 1:
-      MotoarePID();
+    case Urmareste_Linie:
+      Control_Motoare(m1Speed, m2Speed);
       //Intersectie
-      if (sensorValues[0] > 700 && sensorValues[2] > 700 && sensorValues[3] > 700 && sensorValues[5] > 700 || sensorValues[1] > 700 && sensorValues[2] > 700 && sensorValues[3] > 700 && sensorValues[4] > 700 || sensorValues[0] > 700 && sensorValues[1] > 700 && sensorValues[2] > 700 && sensorValues[3] > 700 && sensorValues[4] > 700 && sensorValues[5] > 700) {
-        StateId = 2;
+      if (
+        (sensorValues[0] > 700 && sensorValues[2] > 700 && sensorValues[3] > 700 && sensorValues[5] > 700) || (sensorValues[1] > 700 && sensorValues[2] > 700 && sensorValues[3] > 700 && sensorValues[4] > 700) || (sensorValues[0] > 700 && sensorValues[1] > 700 && sensorValues[2] > 700 && sensorValues[3] > 700 && sensorValues[4] > 700 && sensorValues[5] > 700)) {
+        StateId = INTERSECTIE;
       }
+      StateId = INTERSECTIE;
+
       //Scara stg
       if (sensorValues[0] < 300 && sensorValues[1] < 600 && sensorValues[3] > 700 && sensorValues[4] > 700 && sensorValues[5] > 700) {
-        StateId = 3;
+        StateId = Scara_Stg;
       }
       //Scara drp
       if (sensorValues[0] > 700 && sensorValues[1] > 700 && sensorValues[2] > 700 && sensorValues[4] < 600 && sensorValues[5] < 300) {
-        StateId = 4;
+        StateId = Scara_Drp;
       }
 
       break;
-    case 2:
+    case INTERSECTIE:
 
-      Control_Motoare(0,0);
+      Control_Motoare(0, 0);
       delay(5000);
       Intersectie();
 
       break;
-    case 3:
+    case Scara_Stg:
 
       Control_Motoare(0, 0);
       delay(2000);
       Intoarce_stanga_90();
       break;
 
-    case 4:
+    case Scara_Drp:
       Control_Motoare(0, 0);
       delay(2000);
       Intoarce_dreapta();
       break;
 
     default:
-      StateId = 1;
+      StateId = Urmareste_Linie;
       break;
   }
 
 
 
   delay(10);
-}
-
-void MotoarePID() {
-  float motorSpeed = PIDval();
-
-  int m1Speed = basePWM - motorSpeed;
-  int m2Speed = basePWM + motorSpeed;
-
-  m1Speed = constrain(m1Speed, 0, 255);
-  m2Speed = constrain(m2Speed, 0, 255);
-
-  analogWrite(D2_M2, m2Speed);
-  analogWrite(D1_M2, 0);
-
-  analogWrite(D2_M1, m1Speed);
-  analogWrite(D1_M1, 0);
 }
 
 
@@ -161,43 +156,46 @@ void Control_Motoare(int Speed_M1, int Speed_M2) {
   }
 }
 
-void Intoarce_dreapta() {
+void Intoarce_dreapta() {      
+
+  qtr.readLineBlack(sensorValues);
   int linie = 1;
-  int millis3 = millis();
+  int millis3 = millis();                   //merg in fata cateva ms ca sa ma asigur ca pot sa ma intorc
   if (millis() - millis3 >= 500) {
     Control_Motoare(255, 255);
   }
-  if (sensorValues[0] < 300 && sensorValues[1] < 300 && sensorValues[2] < 300 && sensorValues[3] < 300 && sensorValues[4] < 300 && sensorValues[5] < 300) {
+  if ((sensorValues[0] < 300 && sensorValues[1] < 300 && sensorValues[2] < 300 && sensorValues[3] < 300 && sensorValues[4] < 300 && sensorValues[5] < 300) || (sensorValues[3] < 300 && sensorValues[2] < 300 ))  {   //nu vad nimic inseamna ca linia e sub mine  -> ma intorc
     linie = 0;
   }
-  while (linie == 0) {
-    qtr.readLineBlack(sensorValues);
-    if (sensorValues[3] > 900 || sensorValues[2] > 900) linie = 1;
-    if (linie == 0) {
-      Control_Motoare(200, -200);
-    }
+  if (linie == 0) {
+    Control_Motoare(turnPWM, -turnPWM);
+  }
+  if (sensorValues[3] > 900 || sensorValues[2] > 900) {      //vad linia ma opresc
+    linie = 1;
+    StateId = Urmareste_Linie;
   }
   Control_Motoare(255, 255);
 }
 
 void Intoarce_stanga_90() {
 
-  int millis3 = millis();
+ qtr.readLineBlack(sensorValues);
+  int linie = 1;
+  int millis3 = millis();                   //merg in fata cateva ms ca sa ma asigur ca pot sa ma intorc
   if (millis() - millis3 >= 500) {
     Control_Motoare(255, 255);
   }
-  int linie = 1;
-  if (sensorValues[0] < 300 && sensorValues[1] < 300 && sensorValues[2] < 300 && sensorValues[3] < 300 && sensorValues[4] < 300 && sensorValues[5] < 300) {
+  if ((sensorValues[0] < 300 && sensorValues[1] < 300 && sensorValues[2] < 300 && sensorValues[3] < 300 && sensorValues[4] < 300 && sensorValues[5] < 300) || (sensorValues[3] < 300 && sensorValues[2] < 300 ))  {   //nu vad nimic inseamna ca linia e sub mine  -> ma intorc
     linie = 0;
-    while (linie == 0) {
-      qtr.readLineBlack(sensorValues);
-      if (sensorValues[3] > 900 || sensorValues[2] > 900) linie = 1;
-      if (linie == 0) {
-        Control_Motoare(-200, 200);
-      }
-    }
-    Control_Motoare(255, 255);
   }
+  if (linie == 0) {
+    Control_Motoare(-turnPWM, turnPWM);
+  }
+  if (sensorValues[3] > 900 || sensorValues[2] > 900) {      //vad linia ma opresc
+    linie = 1;
+    StateId = Urmareste_Linie;
+  }
+  Control_Motoare(255, 255);
 }
 
 void Intersectie() {
@@ -205,21 +203,32 @@ void Intersectie() {
 
   Control_Motoare(255, 255);
   if (timp_intersectie == 0) { timp_intersectie = millis(); }
-  if (millis() - timp_intersectie >= 500) {
-    StateId = 1;
+  if (millis() - timp_intersectie >= 5000) {
+    StateId = Urmareste_Linie;                             // daca  nu sunt in caz de giratoriu merg unpic  astept  si ma intorc la celalat mod
     timp_intersectie = 0;
   }
   if (sensorValues[0] < 400 && sensorValues[2] < 400 && sensorValues[3] < 400 && sensorValues[5] < 400) {
     Intoarce_dreapta();
   }
-  MotoarePID();
+
+  //Motor cu PID
+  uint16_t sensors[6];
+  int16_t position = qtr.readLineBlack(sensorValues);
+  float pidValue = PIDval(position, 2500);
+  int m1Speed = basePWM - pidValue;
+  int m2Speed = basePWM + pidValue;
+
+  Control_Motoare(m1Speed, m2Speed);
+  //
+
   if (sensorValues[0] > 700 && sensorValues[2] > 700 && sensorValues[3] > 700) {
     Control_Motoare(0, 0);
     int millis1 = millis();
     if (millis() - millis1 >= 500) {
-      Control_Motoare(175, -175);
+      Control_Motoare(175, -175);  //sunt la iesire din giratoriu , intorc ca sa fiu cu senzorul pe alb  ca sa ma intorc corect
     }
     Intoarce_dreapta();
-    StateId = 1;
+    StateId = Urmareste_Linie;
   }
+  
 }
